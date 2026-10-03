@@ -1,11 +1,11 @@
 # local-lite · 本地简化
 
 > 一个为**上下文窗口很小的本地模型**准备的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Agent 预设。
-> 把每次请求的固定开销从 **≈9,288 token 压到 ≈1,906 token（-79%）**，工具面收拢为
+> 把每次请求的固定开销从 **9,288 token 压到 2,004 token（-78%）**，工具面收拢为
 > 文件读写、检索与终端命令三类。
 >
-> An agent preset for DSH that cuts the standing per-request cost from ~9,288 to
-> ~1,906 tokens (-79%), for local models with small context windows.
+> An agent preset for DSH that cuts the standing per-request cost from 9,288 to
+> 2,004 tokens (-78%), for local models with small context windows.
 
 装好之后，新建会话的预设选择器里会多出一项 **本地简化**。
 
@@ -35,13 +35,25 @@
 对 32k 窗口的本地模型来说，9.3k 的固定开销意味着**还没开始聊就用掉了近三成上下文**。
 关键结论是：**裁工具比裁提示词有效得多**——提示词全砍也才省 1.5k，而工具面收拢能省 6k。
 
-本预设实测（`lm-studio / qwen/qwen3.5-9b`，32k 窗口）：
+本预设实测（同一台机器、同一个 `lm-studio / qwen/qwen3.5-9b`、32k 窗口）：
 
-| | 标准预设 | 本地简化 |
-|---|---|---|
-| 系统提示词 | ≈1,490 token | **186 token** |
-| 工具 schema | ≈7,798 token（36 个） | **≈1,720 token（7 个）** |
-| **固定开销** | **≈9,288 token** | **≈1,906 token（-79%）** |
+| | 标准预设 | 本地简化 | |
+|---|---|---|---|
+| 系统提示词 | 1,490 token | **186 token** | -87% |
+| 工具 schema | 7,798 token（36 个工具） | **1,818 token（13 个工具）** | -77% |
+| **每次请求固定开销** | **9,288 token** | **2,004 token** | **-78%** |
+
+13 个工具 = 本预设声明的 7 个 + `read_image`（`attachments` 挂载时自动注册）
++ `job_output/job_list/job_kill` + 一个宿主层工具 `load_workspace_dependencies`。
+
+> 这 2,004 token 是会话日志里的原始字节算出来的，不是估算：标准预设那 9,288 是本机
+> 会话实测，本地简化这 2,004 来自一次真实会话的 `request/header` 工具 schema 与
+> `system/message` 系统提示词。
+>
+> 一个容易误判的地方：会话记录头部的 `agentPreset` 字段是在**建会话时**写入的，
+> 早于预设绑定，所以即使这次会话确实跑的是本地简化，那个字段仍写着 `standard`。
+> 判断依据应该是模型真正收到的东西——`tools/measure-session.mjs` 现在就是这么做的：
+> 只要 wire 上还留着继承来的全局工具（如 `ssh_*`），就说明 `tool-surface` 没生效。
 
 ---
 
@@ -67,7 +79,9 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 - 项目里有 AGENTS.md 或 README 时，先读它。
 ```
 
-### 2. 工具面只有 7 个
+### 2. 工具面收拢到这几件
+
+本预设自己声明 7 个：
 
 | 工具 | 能力 | 来源 |
 |---|---|---|
@@ -76,6 +90,12 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 | `web_search` / `web_fetch` | 联网检索资料 | `@deepseek-ai/dsh-tool-web` |
 | `pwsh`（Windows）/ `bash`（POSIX） | 执行终端命令 | `@deepseek-ai/dsh-tool-pwsh-persistent` |
 | `job_output` / `job_list` / `job_kill` | 后台任务控制 | `@deepseek-ai/dsh-tool-jobs` |
+
+最终 wire 上是 13 个，差额都是无法由预设声明的：
+
+- `read_image`：宿主 `attachments` 挂载时自动注册，读图片用。
+- `load_workspace_dependencies`：宿主层工具，给出随包 Python/Node 载荷的绝对路径。
+  想连它也去掉的话，在 `cordis.patch.yml` 的 `tool-surface` 行的 `alsoDeny` 里加上即可。
 
 三个取舍：
 
@@ -230,10 +250,14 @@ node tools/session-log.mjs <session.v4.jsonl.zstd> [eventType]
 
 ## 兼容性
 
-- 在 **DeepSeek Harness 0.2.0-rc.2**（Windows / Electron Desktop）上开发与实测。
+- 在 **DeepSeek Harness 0.2.0-rc.2**（Windows / Electron Desktop，`lm-studio / qwen3.5-9b`）
+  上开发并实测通过：系统提示词 270 字符，wire 上 13 个工具。
 - shell 行按平台二选一（`!!js process.platform` 门控）：Windows 用 `pwsh`，POSIX 用 `bash`。
   两个套餐的 `description` 都覆写成中文。**POSIX 分支尚未在真机验证过。**
 - 预设 id 是 `local-lite`，roster order 5，选择器显示名 **本地简化**。
+- `tool-surface` 依赖 `ctx.tools.schemas()` / `ctx.tools.restrict()` 这两个 API；
+  上游若改名，它会**只记日志、不抛错**（预设照常挂载，只是少省 1.2k token），
+  所以升级 DSH 后建议用 `measure-session.mjs` 复查一次工具数量。
 
 ## 许可
 

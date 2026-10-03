@@ -1,7 +1,7 @@
 {
   "name": "@Xeraph627/dsh-local-lite-preset",
   "version": "1.2.0",
-  "description": "本地简化 (local-lite): a minimum-prompt DeepSeek Harness agent preset for short-context local models — cuts the standing per-request cost from ~9,288 to ~1,906 tokens",
+  "description": "本地简化 (local-lite): a minimum-prompt DeepSeek Harness agent preset for short-context local models — cuts the standing per-request cost from 9,288 to 2,004 tokens (-78%)",
   "type": "module",
   "license": "MIT",
   "keywords": [

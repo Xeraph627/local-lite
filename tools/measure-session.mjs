@@ -79,7 +79,43 @@ const contextRecord = records.find((r) => r.type === 'request/context')
 const latest = systemRecords.at(-1)
 const systemText = latest?.data?.message?.content?.map((block) => block.text ?? '').join('') ?? ''
 
-console.log(`=== session: ${records.find((r) => r.type === 'session')?.data?.agentPreset ?? '?'} preset ===`)
+/**
+ * Which preset the session ACTUALLY ran, judged from the wire rather than the
+ * header. The header's `agentPreset` is written when the session record is
+ * created — before the preset is bound — so it reads "standard" even for
+ * sessions that then bound to a preset, or to no preset at all. What the model
+ * was really sent is the only trustworthy evidence.
+ */
+const toolNames = (headerRecord?.data?.header?.tools ?? []).map((tool) => tool?.name ?? tool?.function?.name ?? '?')
+
+/**
+ * Whether a row name matches, treating an absent name as "no opinion".
+ * @param name - the candidate tool name, possibly undefined.
+ * @param pattern - substring to look for.
+ */
+const matches = (name, pattern) => typeof name === 'string' && name.includes(pattern)
+
+function presetVerdict() {
+  if (toolNames.length === 0) return { label: 'unknown', why: 'no tool schemas recorded' }
+  // tool-surface is this preset's own plugin and its whole job is masking the
+  // inherited global surface, so a recorded global tool is proof it did not run.
+  const globalOnly = toolNames.filter((name) => matches(name, 'ssh_'))
+  if (globalOnly.length > 0) {
+    return {
+      label: 'not local-lite',
+      why: `inherited global tools are still on the wire (${globalOnly.join(', ')}), so tool-surface did not restrict this session`,
+    }
+  }
+  if (systemText.includes('本地精简模式')) {
+    return { label: 'local-lite', why: 'the persona is this preset\'s own, and the inherited global tools were masked' }
+  }
+  return { label: 'another preset', why: 'no inherited global tools, but the system prompt is not this preset\'s persona' }
+}
+
+const verdict = presetVerdict()
+console.log(`=== ${verdict.label} (${verdict.why}) ===`)
+const sessionRecord = records.find((r) => r.type === 'session')
+console.log(`session header agentPreset: ${sessionRecord?.agentPreset ?? sessionRecord?.data?.agentPreset ?? '?'}  [written at session creation, before binding]`)
 if (contextRecord) {
   console.log(`route: ${contextRecord.data.provider} / ${contextRecord.data.model}  contextWindow=${contextRecord.data.contextWindow}`)
 }
