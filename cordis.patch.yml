@@ -1,0 +1,195 @@
+# local-lite (本地简化) — a minimum-prompt agent preset for short-context models.
+#
+# The design goal is one number: how many tokens every single request spends
+# before the user's own words. Four surfaces contribute, and this file touches
+# all four:
+#
+# 1. THE SYSTEM PROMPT. `persona` mounts the preset's whole prompt as one
+#    `complete: true` section, so the assembled prompt IS that text — the
+#    harness identity, web-surface, tool-guidance, file-reference, and
+#    structured-output sections never reach the model. `includeRuntimeContext:
+#    false` also removes the sourced user-role runtime snapshots. The prefix is
+#    a few lines of working discipline plus the workspace directory; it is the
+#    entire system prompt, and it is deliberately written in the user's own
+#    language because these models are typically strongest there.
+#
+# 2. THE TOOL SCHEMAS. Schemas repeat on every request, so the roster is the
+#    dominant cost once the prompt is small. Exactly seven tools are mounted —
+#    read/write/edit, glob/grep, web_search/web_fetch, and one shell — and the
+#    shell is the PERSISTENT pwsh row rather than `tool-pwsh`, because the
+#    persistent row accepts a `description` override (its own default is long)
+#    and its schema is one `command` string with no sandbox-escalation fields.
+#
+# 3. THE SHELL. One persistent PowerShell per session means `cd` survives
+#    across calls, which matters more to a small model than to a large one: it
+#    removes the compound-command reasoning that short-context models get
+#    wrong. Output is capped by the tool's own `maxOutputChars`, so raw logs
+#    cannot evict the prompt. Background execution is reached through the
+#    sibling `tool-jobs` controls plus the shell's own `&`/`Start-Process`.
+#
+# 3b. THE INHERITED GLOBAL SURFACE. Tools mounted by the HOST are visible to
+#    every agent regardless of preset, and on this deployment that is where most
+#    of the remaining cost sat: six `ssh_*` controls (~1,090 tokens) plus
+#    `load_workspace_dependencies`. The `tool-surface` row below computes a deny
+#    filter from the live global view and registers it on this preset's standing
+#    scope, so agents composed from this preset stop paying for global tools the
+#    preset does not declare. It is computed rather than listed because
+#    `ctx.tools.restrict()` throws on an unknown name. Re-measure before editing
+#    `keep`: it is the escape hatch for a global tool this preset should keep.
+#
+# 4. WHAT IS DELIBERATELY ABSENT. Plan mode (its `plan:policy` section is ~1k
+#    tokens of standing system prompt and cannot be shortened — note the
+#    `complete: true` persona prefix makes a second complete section an
+#    assembly failure, so plan mode and this preset are mutually exclusive).
+#    Subagents, goals, skills, todos, `ask_user_question`, `present`, the
+#    workflow engine, and `str_replace_editor` (it duplicates read/write/edit).
+#    `tool-result-pruner` is absent too: the shell and read tools already bound
+#    their own output, and silently trimming a result a small model just asked
+#    for is a worse trade at this context size than the space it saves.
+#
+# `compaction-basic` IS included and is not optional at this scale: a short
+# context window is the failure mode being designed for, so automatic
+# compaction has to work. It stays in an isolated realm with nothing else.
+#
+# Adapted from the builtin `minimal` and `standard` presets (MIT).
+- insert:
+    - id: preset-local-lite
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: local-lite
+        name: 本地简化
+        description: 为上下文短小的本地模型准备的极简预设：系统提示词只有几行，工具面收拢为文件读写、检索与终端命令。
+        order: 5
+        plugins:
+          # ── prompt: the whole system prompt, and nothing else ──────────────
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              complete: true
+              includeRuntimeContext: false
+              prefix: |-
+                你是本地精简模式的编码助手，工作目录 {{cwd}}。
+
+                规则：
+                - 先读再改。修改文件前先读取它；不确定就先查，不要猜。
+                - 用工具动手，不要空谈。需要事实就 read/grep/glob/web_search；需要执行就 pwsh。
+                - 保持简短。一次解决一件事，回答用要点，不要复述已知内容。
+                - 改了代码要验证；有失败就修到通过，或者如实说明卡在哪里。
+                - 不要输出大段日志：命令自己过滤（Select-String、-First、-Tail）。
+                - 项目里有 AGENTS.md 或 README 时，先读它。
+
+          # ── files: read / write / edit + glob / grep ──────────────────────
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              readLimit: 1200
+
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          # ── retrieval: web_search / web_fetch ────────────────────────────
+          # Caps are far below the shipped defaults (8 results, 200k chars per
+          # fetch) because a fetched page larger than the model's whole window
+          # is worse than no page at all.
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              searchMaxResults: 5
+              searchMaxQueries: 2
+              fetchMaxOutputChars: 24000
+
+          # ── shell: one persistent process per session ────────────────────
+          # A preset-published service must sit in a group carrying an
+          # entry-local `isolate` realm; without one it publishes into the root
+          # realm and collides with every other preset.
+          - id: shell
+            name: cordis:group
+            group: true
+            isolate:
+              terminals: true
+            config:
+              - id: pty
+                name: '@deepseek-ai/dsh-terminal'
+              - id: terminal-bash
+                name: '@deepseek-ai/dsh-terminal-bash'
+                disabled: !!js process.platform === 'win32'
+              - id: terminal-pwsh
+                name: '@deepseek-ai/dsh-terminal-bash'
+                disabled: !!js process.platform !== 'win32'
+                config:
+                  shellDialect: pwsh
+              - id: persistent-bash
+                name: '@deepseek-ai/dsh-tool-bash-persistent'
+                disabled: !!js process.platform === 'win32'
+                config:
+                  timeoutMs: 300000
+                  maxOutputChars: 12000
+                  description: |-
+                    在当前工作目录下运行 bash 命令并返回输出。
+                    * 这是一个常驻 shell：cd、变量、导出在多次调用之间保持。
+                    * 参数不需要 XML 转义；用 && 串联多条命令。
+                    * 输出过多时自己过滤（grep/head/tail/wc），只读需要的范围。
+                    * 长时间运行的命令用 & 放到后台，再用 job_output 读取。
+              - id: persistent-pwsh
+                name: '@deepseek-ai/dsh-tool-pwsh-persistent'
+                disabled: !!js process.platform !== 'win32'
+                config:
+                  timeoutMs: 300000
+                  maxOutputChars: 12000
+                  description: |-
+                    在当前工作目录下运行 PowerShell 命令并返回输出。
+                    * 这是一个常驻 shell：cd、变量、函数在多次调用之间保持。
+                    * 参数不需要 XML 转义；用原生 Windows 路径（C:\...），环境变量用 $env:NAME。
+                    * 输出过多时自己过滤（Select-String/-First/-Tail），只读需要的范围。
+                    * 长时间运行的命令用 Start-Process 或 & 放到后台，再用 job_output 读取。
+
+          # ── background jobs: job_output / job_list / job_kill ────────────
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+
+          # ── tool surface: mask inherited global tools ────────────────────
+          # The name MUST be a bare package specifier — here the bundle's OWN
+          # package name, which resolves to its `exports` entry point
+          # (`./lib/index.js`). A path name does NOT work, and it fails in a way
+          # worth knowing:
+          #
+          # The Host's patch parser anchors row names only for `insert` rows and
+          # the children of `group: true` rows. A preset declaration's
+          # `config.plugins` is neither — so `/abs/plugin.mjs` reaches the
+          # Loader as a bare filesystem path (not a `file://` URL) and
+          # `./plugin.mjs` as a literal relative string. Either way the module
+          # cannot be resolved, the row's fiber is never created, and the
+          # registry's audit fails this ENTIRE preset with "<id>: never
+          # started" — the UI then shows 加载失败 for the whole preset.
+          #
+          # The plugin ships INSIDE this package rather than as a sibling
+          # dependency on purpose. A `link:` or `file:` dependency of a bundle is
+          # not installed transitively: the profile symlinks the bundle folder
+          # and never installs the bundle's own dependencies, so a nested
+          # package is absent on any other machine. One package, one specifier,
+          # nothing to install.
+          - id: tool-surface
+            name: '@Xeraph627/dsh-local-lite-preset'
+            config:
+              # Global tools to keep anyway. `ask_user_question` is the one
+              # worth considering: a small model can otherwise only give up when
+              # a request is genuinely ambiguous. Left out by default, because
+              # `tool-surface` already keeps everything this preset declares and
+              # the goal here is a floor on standing cost.
+              keep: []
+
+
+
+
+
+          # ── compaction: required at this context size ───────────────────
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'

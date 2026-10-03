@@ -1,0 +1,36 @@
+{
+  "name": "@Xeraph627/dsh-local-lite-preset",
+  "version": "1.2.0",
+  "description": "本地简化 (local-lite): a minimum-prompt DeepSeek Harness agent preset for short-context local models — cuts the standing per-request cost from ~9,288 to ~1,906 tokens",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "dsh-bundle",
+    "agent-preset",
+    "local-model",
+    "context-window",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xeraph627/local-lite.git"
+  },
+  "homepage": "https://github.com/Xeraph627/local-lite#readme",
+  "bugs": {
+    "url": "https://github.com/Xeraph627/local-lite/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "lib/index.js"
+  ]
+}

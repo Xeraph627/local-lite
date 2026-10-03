@@ -1,0 +1,4 @@
+# Normalize to LF in the repository so a clone on any platform gets identical
+# bytes for every text file — these are YAML, JavaScript, and Markdown, all of
+# which the Host parses, and the patch file is compared as text.
+* text=auto eol=lf
