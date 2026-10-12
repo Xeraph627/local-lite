@@ -13,7 +13,11 @@ import { readFileSync } from 'node:fs'
 const args = process.argv.slice(2)
 const bodyFlag = args.indexOf('--body')
 const bodyFile = bodyFlag === -1 ? undefined : args[bodyFlag + 1]
-const [repo, prNumber] = args.filter((_, index) => index !== bodyFlag && index !== bodyFlag + 1)
+// Remove the flag and its value only when the flag is present. Testing the
+// indices directly is wrong: with no flag, bodyFlag is -1 and bodyFlag + 1 is 0,
+// which would silently drop the first positional argument.
+const positional = args.filter((arg, index) => !(bodyFlag !== -1 && (index === bodyFlag || index === bodyFlag + 1)))
+const [repo, prNumber] = positional
 if (!repo || !prNumber) {
   console.error('usage: node pr-status.mjs <owner/repo> <pr-number> [--body <file.md>]')
   process.exit(2)
@@ -32,8 +36,16 @@ function readToken() {
 
 const token = readToken()
 
+/**
+ * One GitHub API call, retried past transient local socket failures.
+ *
+ * This machine runs a local HTTPS accelerator that binds ephemeral ports near
+ * 127.0.0.1:443; a burst of requests can make Node's raw sockets fail with
+ * `EADDRINUSE 127.0.0.1:443` where git's own transport still succeeds. Those
+ * clear within seconds, so a short retry beats reporting a false API failure.
+ */
 async function api(path, init = {}) {
-  const response = await fetch(`https://api.github.com${path}`, {
+  const request = {
     ...init,
     headers: {
       authorization: `token ${token}`,
@@ -41,9 +53,21 @@ async function api(path, init = {}) {
       'user-agent': 'dsh-agent',
       ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
     },
-  })
-  if (!response.ok) throw new Error(`${path} -> ${response.status} ${response.statusText}`)
-  return response.json()
+  }
+  let lastError
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      const response = await fetch(`https://api.github.com${path}`, request)
+      if (!response.ok) throw new Error(`${path} -> ${response.status} ${response.statusText}`)
+      return await response.json()
+    } catch (error) {
+      lastError = error
+      const transient = /EADDRINUSE|ECONNRESET|socket hang up|UNABLE_TO_VERIFY/i.test(String(error?.cause ?? error))
+      if (!transient || attempt === 5) break
+      await new Promise((resolve) => setTimeout(resolve, attempt * 5000))
+    }
+  }
+  throw lastError
 }
 
 if (bodyFile !== undefined) {
