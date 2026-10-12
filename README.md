@@ -43,9 +43,11 @@
 | 工具 schema | 7,798 token（36 个工具） | **1,818 token（13 个工具）** | -77% |
 | **每次请求固定开销** | **9,288 token** | **2,004 token** | **-78%** |
 
-13 个工具 = 本预设声明的 7 个 + `read_image`（`attachments` 挂载时自动注册）
-+ `job_output/job_list/job_kill` + 一个宿主层工具 `load_workspace_dependencies`。
-
+> **这两个数字都带 profile 前提，不能当成 harness 的常量。** 它们都取自作者这台机器
+> （装了 SSH 插件等额外宿主插件）。干净 harness 上，本预设的 wire 是 **11 个工具**
+> ——详见下面「工具面」一节。跨 profile 比大小没有意义，本页保留这张表只是为了给出
+> 同一台机器上的前后对照。
+>
 > 这 2,004 token 是会话日志里的原始字节算出来的，不是估算：标准预设那 9,288 是本机
 > 会话实测，本地简化这 2,004 来自一次真实会话的 `request/header` 工具 schema 与
 > `system/message` 系统提示词。
@@ -65,19 +67,21 @@
 harness 身份、web-surface、工具指南、文件引用、结构化输出等段落一律不再注入。
 配合 `includeRuntimeContext: false`，sandbox / approval 那几条 user-role 运行时快照也一并关闭。
 
-提示词本身只有 270 字符，写成中文，因为本地小模型通常在中文上表现最好：
+提示词本身 247 字符（组装时再追加一行工作目录，合计 270 字符），写成中文，因为本地小模型通常在中文上表现最好：
 
 ```
 你是本地精简模式的编码助手，工作目录 <cwd>。
 
 规则：
 - 先读再改。修改文件前先读取它；不确定就先查，不要猜。
-- 用工具动手，不要空谈。需要事实就 read/grep/glob/web_search；需要执行就 pwsh。
+- 用工具动手，不要空谈。需要事实就 read/grep/glob/web_search；需要执行就用 shell 工具。
 - 保持简短。一次解决一件事，回答用要点，不要复述已知内容。
 - 改了代码要验证；有失败就修到通过，或者如实说明卡在哪里。
-- 不要输出大段日志：命令自己过滤（Select-String、-First、-Tail）。
+- 不要输出大段日志：在命令里自己过滤，只取需要的范围。
 - 项目里有 AGENTS.md 或 README 时，先读它。
 ```
+
+提示词里**不出现具体可执行文件名**（不写 `pwsh`、不写 PowerShell 的参数名）：`pwsh` 行在非 Windows 上是 `disabled` 的，写死工具名会让 macOS / Linux 用户看到一个不存在的工具。平台相关的指引只放在各自已被 `process.platform` 门控的 shell 行里。
 
 ### 2. 工具面收拢到这几件
 
@@ -91,11 +95,16 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 | `pwsh`（Windows）/ `bash`（POSIX） | 执行终端命令 | `@deepseek-ai/dsh-tool-pwsh-persistent` |
 | `job_output` / `job_list` / `job_kill` | 后台任务控制 | `@deepseek-ai/dsh-tool-jobs` |
 
-最终 wire 上是 13 个，差额都是无法由预设声明的：
+**干净 harness 上的基线是 11 个工具**（社区评审在分支上实测）：上面这 7 个加上无法由预设声明的 4 个——
 
 - `read_image`：宿主 `attachments` 挂载时自动注册，读图片用。
-- `load_workspace_dependencies`：宿主层工具，给出随包 Python/Node 载荷的绝对路径。
-  想连它也去掉的话，在 `cordis.patch.yml` 的 `tool-surface` 行的 `alsoDeny` 里加上即可。
+- `job_output` / `job_list` / `job_kill`：随 `tool-jobs` 行注册。
+- `load_workspace_dependencies`：宿主层工具。
+
+在装了额外宿主插件的机器上还会多出来，那时 `tool-surface` 才真正开始省 token：
+作者这台机器装了 SSH 插件，多出 6 个 `ssh_*`，连同 `load_workspace_dependencies` 一共约
+**1,249 token**。这部分**取决于 profile，不是预设的固定成本**——所以本页把基线写成 11 个，
+把 13 个标注为「作者 profile」的实测值。
 
 三个取舍：
 
@@ -203,7 +212,9 @@ local-lite/
    ├─ patch-anchoring.mjs    # 复刻 Host 的行名锚定规则，供校验器使用
    ├─ test-tool-surface.mjs  # 用假注册表单测插件逻辑
    ├─ measure-session.mjs    # 实测某个会话的固定开销（提示词 + 工具 schema）
+   ├─ verify-claims.mjs      # 用字节校验文档里的数字：persona 字符数 + 平台专用词 + 工具清单
    ├─ session-log.mjs        # 解码会话日志（zstd 分帧 JSONL）
+   ├─ pr-status.mjs          # 查 / 改提交 PR：check-runs、workflow runs、描述
    └─ asar.mjs               # 只读 app.asar（Desktop 里无法用 shell 打开）
 ```
 
@@ -223,7 +234,10 @@ node tools/test-tool-surface.mjs
 # 3. 实测某个会话的固定开销
 node tools/measure-session.mjs <session.v4.jsonl.zstd>
 
-# 4. 会话日志概览（事件类型统计 / 读某类事件）
+# 4. 校验文档数字（persona 必须不含平台专用工具名）
+node tools/verify-claims.mjs cordis.patch.yml <session.v4.jsonl.zstd>
+
+# 5. 会话日志概览（事件类型统计 / 读某类事件）
 node tools/session-log.mjs <session.v4.jsonl.zstd> [eventType]
 ```
 
@@ -251,13 +265,16 @@ node tools/session-log.mjs <session.v4.jsonl.zstd> [eventType]
 ## 兼容性
 
 - 在 **DeepSeek Harness 0.2.0-rc.2**（Windows / Electron Desktop，`lm-studio / qwen3.5-9b`）
-  上开发并实测通过：系统提示词 270 字符，wire 上 13 个工具。
+  上开发并实测通过：系统提示词 270 字符（persona 247 字符 + 一行工作目录）。
 - shell 行按平台二选一（`!!js process.platform` 门控）：Windows 用 `pwsh`，POSIX 用 `bash`。
-  两个套餐的 `description` 都覆写成中文。**POSIX 分支尚未在真机验证过。**
+  两个套餐的 `description` 都覆写成中文。**POSIX 分支尚未在真机验证过**——但 persona 里
+  不出现具体工具名，所以非 Windows 用户不会拿到一个不存在的工具。
 - 预设 id 是 `local-lite`，roster order 5，选择器显示名 **本地简化**。
 - `tool-surface` 依赖 `ctx.tools.schemas()` / `ctx.tools.restrict()` 这两个 API；
   上游若改名，它会**只记日志、不抛错**（预设照常挂载，只是少省 1.2k token），
-  所以升级 DSH 后建议用 `measure-session.mjs` 复查一次工具数量。
+  所以升级 DSH 后建议用 `tools/verify-claims.mjs` 复查一次工具数量。
+- 干净 harness 上 wire 是 11 个工具；装了额外宿主插件会更多，那时 `tool-surface` 才会
+  开始削掉它们。工具数取决于 profile，不是这个预设的固定属性。
 
 ## 许可
 
