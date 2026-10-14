@@ -1,11 +1,12 @@
 # local-lite · 本地简化
 
 > 一个为**上下文窗口很小的本地模型**准备的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Agent 预设。
-> 把每次请求的固定开销从 **9,288 token 压到 2,004 token（-78%）**，工具面收拢为
-> 文件读写、检索与终端命令三类。
+> 每次请求的固定开销约 **2,004 token**（系统提示词 + 工具 schema），工具面收拢为
+> 文件读写、检索与终端命令七件。
 >
-> An agent preset for DSH that cuts the standing per-request cost from 9,288 to
-> 2,004 tokens (-78%), for local models with small context windows.
+> A minimum-prompt DSH agent preset for short-context local models: a standing
+> per-request cost of about 2,004 tokens (system prompt plus tool schemas), with
+> the tool surface narrowed to seven file, search, web and shell tools.
 
 装好之后，新建会话的预设选择器里会多出一项 **本地简化**。
 
@@ -20,7 +21,7 @@
 | 系统提示词 | 每次请求完整重发 |
 | 工具 schema JSON | **同样每次请求完整重发**，工具面越大越贵 |
 
-在标准预设的会话里实测（`deepseek-account / deepseek-flash`）：
+标准预设在 `deepseek-account / deepseek-flash`（100 万窗口）上的实测：
 
 ```
 系统提示词      5,953 字符   ≈  1,490 token
@@ -30,32 +31,34 @@
 ```
 
 单个体积最大的工具：`pwsh` 860 token、`workflow` 847、`plugin_manager` 612、
-`ask_user_question` 312。
+`ask_user_question` 312。关键结论是：**裁工具比裁提示词有效得多**——提示词全砍也才省 1.5k。
 
-对 32k 窗口的本地模型来说，9.3k 的固定开销意味着**还没开始聊就用掉了近三成上下文**。
-关键结论是：**裁工具比裁提示词有效得多**——提示词全砍也才省 1.5k，而工具面收拢能省 6k。
+### 同一台机器、同一个模型上的对照
 
-本预设实测（同一台机器、同一个 `lm-studio / qwen/qwen3.5-9b`、32k 窗口）：
+下面三行都是本机 `lm-studio / qwen/qwen3.5-9b`、32k 窗口的会话日志实测。
+**只有前两行可以相减**，它们用的是同一套宿主工具面和同一个 persona：
 
-| | 标准预设 | 本地简化 | |
+| 会话 | 系统提示词 | 工具 schema | 固定开销 |
 |---|---|---|---|
-| 系统提示词 | 1,490 token | **186 token** | -87% |
-| 工具 schema | 7,798 token（36 个工具） | **1,818 token（13 个工具）** | -77% |
-| **每次请求固定开销** | **9,288 token** | **2,004 token** | **-78%** |
+| 本地简化，`tool-surface` 生效 | 186 token | 1,818 token（13 个工具） | **2,004 token** |
+| 本地简化，`tool-surface` **未**生效 | 186 token | 2,969 token（19 个工具） | 3,155 token |
+| 标准预设（`deepseek-flash`，另一条路由，作参照） | 1,490 token | 7,798 token（36 个工具） | 9,288 token |
 
-> **这两个数字都带 profile 前提，不能当成 harness 的常量。** 它们都取自作者这台机器
-> （装了 SSH 插件等额外宿主插件）。干净 harness 上，本预设的 wire 是 **11 个工具**
-> ——详见下面「工具面」一节。跨 profile 比大小没有意义，本页保留这张表只是为了给出
-> 同一台机器上的前后对照。
+前两行的 persona 逐字节相同（已比对哈希），宿主工具面相同，**唯一差别是
+`tool-surface` 有没有把继承来的全局工具摘掉**：那 6 个 `ssh_*` 与
+`load_workspace_dependencies` 合计约 1,151 token。所以这张表量的是这个插件本身的收益，
+不是跨 profile 的对比。
+
+> 第三行只作为量级参照，**不要与前两行相减**：它跑在另一条路由、另一个窗口大小上。
 >
-> 这 2,004 token 是会话日志里的原始字节算出来的，不是估算：标准预设那 9,288 是本机
-> 会话实测，本地简化这 2,004 来自一次真实会话的 `request/header` 工具 schema 与
-> `system/message` 系统提示词。
+> **这个收益的大小取决于机器上装了多少宿主插件**：摘掉的都是宿主层挂载的工具，干净
+> harness 上只有 `load_workspace_dependencies` 一个，那时省下的就少得多。本预设的**固定
+> 成本**是 2,004 token；`tool-surface` 是随 profile 变化的**额外**收益。
 >
 > 一个容易误判的地方：会话记录头部的 `agentPreset` 字段是在**建会话时**写入的，
-> 早于预设绑定，所以即使这次会话确实跑的是本地简化，那个字段仍写着 `standard`。
-> 判断依据应该是模型真正收到的东西——`tools/measure-session.mjs` 现在就是这么做的：
-> 只要 wire 上还留着继承来的全局工具（如 `ssh_*`），就说明 `tool-surface` 没生效。
+> 早于预设绑定，所以跑本地简化的会话里那个字段仍写着 `standard`。判断依据应该是模型
+> 真正收到的东西——`tools/verify-claims.mjs` 现在就是这么做的：wire 上还留着继承来的
+> 全局工具，就说明 `tool-surface` 没生效。
 
 ---
 
@@ -101,10 +104,9 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 - `job_output` / `job_list` / `job_kill`：随 `tool-jobs` 行注册。
 - `load_workspace_dependencies`：宿主层工具。
 
-在装了额外宿主插件的机器上还会多出来，那时 `tool-surface` 才真正开始省 token：
-作者这台机器装了 SSH 插件，多出 6 个 `ssh_*`，连同 `load_workspace_dependencies` 一共约
-**1,249 token**。这部分**取决于 profile，不是预设的固定成本**——所以本页把基线写成 11 个，
-把 13 个标注为「作者 profile」的实测值。
+装了额外宿主插件就会更多，那时 `tool-surface` 才开始削掉它们：作者这台机器装了 SSH 插件，
+多出 6 个 `ssh_*`，与前两行表中的 13 个工具对应。**工具数取决于 profile，不是这个预设的
+固定属性**——所以基线写 11 个，13 个是「作者 profile」的实测值。
 
 三个取舍：
 
