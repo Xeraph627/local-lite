@@ -37,12 +37,14 @@
 #    preset does not declare. It is computed rather than listed because
 #    `ctx.tools.restrict()` throws on an unknown name. Re-measure before editing
 #    `keep`: it is the escape hatch for a global tool this preset should keep.
+#    Note the preset does NOT register `web_fetch`, so a host that mounts it
+#    globally gets it masked like any other tool this preset does not declare.
 #
 #    How much that is worth is per-host, because the row can only remove tools
 #    the host mounted: the same-machine pair of sessions (this row running vs
-#    not) differed by 1,151 tokens. On a plain harness the only inherited global
-#    is `load_workspace_dependencies`, so the saving is ~158. The preset's OWN
-#    cost is the stable number; this one is not.
+#    not) differed by 1,151 tokens. On a plain harness the removable globals are
+#    `load_workspace_dependencies` (~158) and a host-global `web_fetch` (61).
+#    The preset's own cost is the stable number; this one is not.
 #
 # 4. WHAT IS DELIBERATELY ABSENT. Plan mode (its `plan:policy` section is ~1k
 #    tokens of standing system prompt and cannot be shortened — note the
