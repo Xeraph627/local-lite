@@ -239,10 +239,11 @@ local-lite/
    ├─ test-tool-surface.mjs  # 六种情形的回归测试：假注册表复刻 restrict() 的三类拒绝
    ├─ mutation-check.mjs     # 变异校验：证明 run_code 过滤是必需而非装饰
    ├─ install-to-library.mjs # 按市场发布的三件套装进 $DSH_HOME/agent-presets/
-   ├─ capture-host-state.mjs  # 固化 preset center 对库目录的实时读取（实机证据）
+   ├─ capture-host-state.mjs # 固化 preset center 对库目录的实时读取（实机证据）
+   ├─ session-frames.mjs     # 会话日志解码的唯一实现（zstd 分帧），供下面几个工具共用
    ├─ measure-session.mjs    # 实测某个会话的固定开销（提示词 + 工具 schema）
    ├─ verify-claims.mjs      # 用字节校验文档里的数字：persona 字符数 + 平台专用词 + 工具清单
-   ├─ session-log.mjs        # 解码会话日志（zstd 分帧 JSONL）
+   ├─ session-log.mjs        # 会话日志概览（事件类型统计 / 读某类事件）
    ├─ pr-status.mjs          # 查 / 改提交 PR：check-runs、workflow runs、描述
    ├─ pr-comment.mjs         # 把文件内容发成 issue / PR 评论
    └─ asar.mjs               # 只读 app.asar（Desktop 里无法用 shell 打开）
@@ -282,7 +283,7 @@ node tools/capture-host-state.mjs [--session <session.v4.jsonl.zstd>]
 
 会话日志位置：`$DSH_HOME/sessions/<转义后的工作区目录>/<session-id>/session.v4.jsonl.zstd`
 
-### 三个踩过的坑（都已在工具里固化成检查）
+### 四个踩过的坑（都已在工具里固化成检查）
 
 **1. 预设声明里的行名绝不能是路径。** 失败的不是那一行，而是**整个预设**——UI 上整张卡片
 显示「加载失败」加一句 `tool-surface (...): never started`。原因在 Host 的
@@ -298,6 +299,12 @@ node tools/capture-host-state.mjs [--session <session.v4.jsonl.zstd>]
 
 **3. `install_bundle` 会跑 pnpm，pnpm 会去问 registry。** 网络不通时实测挂了近 4 小时才被
 终止，失败时会回滚 profile 的 `package.json`。网络不可用时改用 `set_plugin` 关掉再打开预设行。
+
+**4. 会话日志的帧边界只能靠 magic 找，不能靠「能不能解出东西」。** 日志是一串**各自独立**的
+zstd 帧，很多帧的帧头 `fcsFlag = 0`（不声明解压大小）。曾经用「能解出非空内容的最短前缀」当
+帧长——而**跨过帧边界的切片会返回后一帧的字节**，看起来完全合法，于是四帧被当成一帧走完，
+一份完整会话被读成「只有会话头、没有任何请求」。我因此一度判定维护者给的会话是空的。
+现在唯一实现是 `session-frames.mjs`，边界取下一个 magic 的位置，三个工具共用它。
 
 ---
 
