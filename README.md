@@ -230,10 +230,12 @@ local-lite/
    ├─ test-tool-surface.mjs  # 六种情形的回归测试：假注册表复刻 restrict() 的三类拒绝
    ├─ mutation-check.mjs     # 变异校验：证明 run_code 过滤是必需而非装饰
    ├─ install-to-library.mjs # 按市场发布的三件套装进 $DSH_HOME/agent-presets/
+   ├─ capture-host-state.mjs  # 固化 preset center 对库目录的实时读取（实机证据）
    ├─ measure-session.mjs    # 实测某个会话的固定开销（提示词 + 工具 schema）
    ├─ verify-claims.mjs      # 用字节校验文档里的数字：persona 字符数 + 平台专用词 + 工具清单
    ├─ session-log.mjs        # 解码会话日志（zstd 分帧 JSONL）
    ├─ pr-status.mjs          # 查 / 改提交 PR：check-runs、workflow runs、描述
+   ├─ pr-comment.mjs         # 把文件内容发成 issue / PR 评论
    └─ asar.mjs               # 只读 app.asar（Desktop 里无法用 shell 打开）
 ```
 
@@ -264,6 +266,9 @@ node tools/session-log.mjs <session.v4.jsonl.zstd> [eventType]
 
 # 7. 按市场发布的三件套装进预设库（验证 preset center 的安装/声明路径）
 node tools/install-to-library.mjs            # --remove 卸载；--from <目录> 指定来源
+
+# 8. 固化 preset center 在运行中宿主上对库目录的读取（实机证据）
+node tools/capture-host-state.mjs [--session <session.v4.jsonl.zstd>]
 ```
 
 会话日志位置：`$DSH_HOME/sessions/<转义后的工作区目录>/<session-id>/session.v4.jsonl.zstd`
