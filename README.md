@@ -221,6 +221,7 @@ local-lite/
    ├─ patch-anchoring.mjs    # 复刻 Host 的行名锚定规则，供校验器使用
    ├─ test-tool-surface.mjs  # 六种情形的回归测试：假注册表复刻 restrict() 的三类拒绝
    ├─ mutation-check.mjs     # 变异校验：证明 run_code 过滤是必需而非装饰
+   ├─ install-to-library.mjs # 按市场发布的三件套装进 $DSH_HOME/agent-presets/
    ├─ measure-session.mjs    # 实测某个会话的固定开销（提示词 + 工具 schema）
    ├─ verify-claims.mjs      # 用字节校验文档里的数字：persona 字符数 + 平台专用词 + 工具清单
    ├─ session-log.mjs        # 解码会话日志（zstd 分帧 JSONL）
@@ -252,6 +253,9 @@ node tools/verify-claims.mjs cordis.patch.yml <session.v4.jsonl.zstd>
 
 # 6. 会话日志概览（事件类型统计 / 读某类事件）
 node tools/session-log.mjs <session.v4.jsonl.zstd> [eventType]
+
+# 7. 按市场发布的三件套装进预设库（验证 preset center 的安装/声明路径）
+node tools/install-to-library.mjs            # --remove 卸载；--from <目录> 指定来源
 ```
 
 会话日志位置：`$DSH_HOME/sessions/<转义后的工作区目录>/<session-id>/session.v4.jsonl.zstd`
