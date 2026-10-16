@@ -1,11 +1,11 @@
 # local-lite · 本地简化
 
 > 一个为**上下文窗口很小的本地模型**准备的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Agent 预设。
-> 每次请求的固定开销约 **1,943 token**（系统提示词 + 工具 schema），工具面收拢为
+> 每次请求的固定开销约 **1,789 token**（系统提示词 + 工具 schema），工具面收拢为
 > 文件读写、检索与终端命令七件。
 >
 > A minimum-prompt DSH agent preset for short-context local models: a standing
-> per-request cost of about 1,943 tokens (system prompt plus tool schemas), with
+> per-request cost of about 1,789 tokens (system prompt plus tool schemas), with
 > the tool surface narrowed to seven file, search, web and shell tools.
 
 装好之后，新建会话的预设选择器里会多出一项 **本地简化**。
@@ -35,29 +35,30 @@
 
 ### 同一台机器、同一个模型上的对照
 
-下面三行都是本机 `lm-studio / qwen/qwen3.5-9b`、32k 窗口的会话日志实测。
-**只有前两行可以相减**，它们用的是同一套宿主工具面和同一个 persona：
+下面各行都是本机 `lm-studio`、32k 窗口的会话日志实测：
 
 | 会话 | 系统提示词 | 工具 schema | 固定开销 |
 |---|---|---|---|
-| 本地简化，`tool-surface` 生效 | 186 token | 1,818 token（13 个工具） | **2,004 token** |
+| 本地简化（当前配置，`web_fetch` 关） | 190 token | 1,599 token（11 个工具） | **1,789 token** |
+| 本地简化，`web_fetch` 开 | 186 token | 1,818 token（13 个工具） | 2,004 token |
 | 本地简化，`tool-surface` **未**生效 | 186 token | 2,969 token（19 个工具） | 3,155 token |
-| 标准预设（`deepseek-flash`，另一条路由，作参照） | 1,490 token | 7,798 token（36 个工具） | 9,288 token |
+| 标准预设（`deepseek-flash`，另一条路由，仅作参照） | 1,490 token | 7,798 token（36 个工具） | 9,288 token |
 
-前两行的 persona 逐字节相同（已比对哈希），宿主工具面相同，**唯一差别是
+第 2、3 行的 persona 逐字节相同（已比对哈希），宿主工具面相同，**唯一差别是
 `tool-surface` 有没有把继承来的全局工具摘掉**：那 6 个 `ssh_*` 与
-`load_workspace_dependencies` 合计约 1,151 token。所以这张表量的是这个插件本身的收益，
+`load_workspace_dependencies` 合计约 1,151 token。这一对量的是插件本身的收益，
 不是跨 profile 的对比。
 
-> 上表是 `fetch: true` 时期的实测。改成 `fetch: false` 后 `web_fetch` 不再注册，按它的
-> schema 字节推算约 **1,943 token / 12 个工具**；首次在 library 路径下跑会话时会回填这个
-> 实测值。
+> 第 1 行是当前配置的实测。与第 2 行的差别有两处：`web_fetch` 的 schema（61 token）不再
+> 注册，以及 `load_workspace_dependencies` 被摘掉（第 2 行里它还在）。提示词 190 而非 186
+> 是因为 persona 的 247 字符后追加的工作目录行这次是 10 字符（`D:\ASUS\Work\Chat` 那次是
+> 17 字符，故 270 字符 / 186 token）。
 >
-> 第三行只作为量级参照，**不要与前两行相减**：它跑在另一条路由、另一个窗口大小上。
+> 第 4 行只作为量级参照，**不要与前三行相减**：它跑在另一条路由、另一个窗口大小上。
 >
-> **这个收益的大小取决于机器上装了多少宿主插件**：摘掉的都是宿主层挂载的工具，干净
-> harness 上只有 `load_workspace_dependencies` 一个，那时省下的就少得多。本预设的**固定
-> 成本**是约 1,943 token；`tool-surface` 是随 profile 变化的**额外**收益。
+> **收益大小取决于机器上装了多少宿主插件**：摘掉的都是宿主层挂载的工具，干净 harness 上
+> 只剩 `load_workspace_dependencies` 一个可摘。本预设的**固定成本**是约 1,789 token；
+> `tool-surface` 是随 profile 变化的**额外**收益。
 >
 > 一个容易误判的地方：会话记录头部的 `agentPreset` 字段是在**建会话时**写入的，
 > 早于预设绑定，所以跑本地简化的会话里那个字段仍写着 `standard`。判断依据应该是模型
@@ -303,8 +304,10 @@ node tools/capture-host-state.mjs [--session <session.v4.jsonl.zstd>]
 - `tool-surface` 依赖 `ctx.tools.schemas()` / `ctx.tools.restrict()` 这两个 API；
   上游若改名，它会**只记日志、不抛错**（预设照常挂载，只是少省 1.2k token），
   所以升级 DSH 后建议用 `tools/verify-claims.mjs` 复查一次工具数量。
-- 干净 harness 上 wire 是 11 个工具；装了额外宿主插件会更多，那时 `tool-surface` 才会
+- 干净 harness 上 wire 是 10 个工具；装了额外宿主插件会更多，那时 `tool-surface` 才会
   开始削掉它们。工具数取决于 profile，不是这个预设的固定属性。
+- 实测基线（本机 `lm-studio / liquid/lfm2.5-1.2b`、32k 窗口）：系统提示词 257 字符 /
+  190 token，工具 schema 11 个 / 6,087 字节 / 1,599 token，合计 **1,789 token**。
 
 ## 许可
 
