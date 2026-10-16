@@ -89,16 +89,18 @@
             config:
               sampleOverCapGlobResults: false
 
-          # ── retrieval: web_search / web_fetch ────────────────────────────
-          # Caps are far below the shipped defaults (8 results, 200k chars per
-          # fetch) because a fetched page larger than the model's whole window
-          # is worse than no page at all.
+          # ── retrieval: web_search only ───────────────────────────────────
+          # `fetch: false` skips registering `web_fetch` at all (the tool-web
+          # plugin gates each tool on its own flag). The preset's job is coding
+          # and lookup for a small local model, and server-side search is enough
+          # for that; leaving fetch off also means the model is never the one
+          # choosing a URL to request, and it drops one tool schema.
           - id: tool-web
             name: '@deepseek-ai/dsh-tool-web'
             config:
+              fetch: false
               searchMaxResults: 5
               searchMaxQueries: 2
-              fetchMaxOutputChars: 24000
 
           # ── shell: one persistent process per session ────────────────────
           # A preset-published service must sit in a group carrying an

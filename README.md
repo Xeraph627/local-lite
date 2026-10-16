@@ -1,11 +1,11 @@
 # local-lite · 本地简化
 
 > 一个为**上下文窗口很小的本地模型**准备的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Agent 预设。
-> 每次请求的固定开销约 **2,004 token**（系统提示词 + 工具 schema），工具面收拢为
+> 每次请求的固定开销约 **1,943 token**（系统提示词 + 工具 schema），工具面收拢为
 > 文件读写、检索与终端命令七件。
 >
 > A minimum-prompt DSH agent preset for short-context local models: a standing
-> per-request cost of about 2,004 tokens (system prompt plus tool schemas), with
+> per-request cost of about 1,943 tokens (system prompt plus tool schemas), with
 > the tool surface narrowed to seven file, search, web and shell tools.
 
 装好之后，新建会话的预设选择器里会多出一项 **本地简化**。
@@ -49,11 +49,15 @@
 `load_workspace_dependencies` 合计约 1,151 token。所以这张表量的是这个插件本身的收益，
 不是跨 profile 的对比。
 
+> 上表是 `fetch: true` 时期的实测。改成 `fetch: false` 后 `web_fetch` 不再注册，按它的
+> schema 字节推算约 **1,943 token / 12 个工具**；首次在 library 路径下跑会话时会回填这个
+> 实测值。
+>
 > 第三行只作为量级参照，**不要与前两行相减**：它跑在另一条路由、另一个窗口大小上。
 >
 > **这个收益的大小取决于机器上装了多少宿主插件**：摘掉的都是宿主层挂载的工具，干净
 > harness 上只有 `load_workspace_dependencies` 一个，那时省下的就少得多。本预设的**固定
-> 成本**是 2,004 token；`tool-surface` 是随 profile 变化的**额外**收益。
+> 成本**是约 1,943 token；`tool-surface` 是随 profile 变化的**额外**收益。
 >
 > 一个容易误判的地方：会话记录头部的 `agentPreset` 字段是在**建会话时**写入的，
 > 早于预设绑定，所以跑本地简化的会话里那个字段仍写着 `standard`。判断依据应该是模型
@@ -94,19 +98,22 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 |---|---|---|
 | `read` / `write` / `edit` | 读写文件 | `@deepseek-ai/dsh-tool-fs` |
 | `glob` / `grep` | 按路径 / 内容检索 | `@deepseek-ai/dsh-tool-fs-search` |
-| `web_search` / `web_fetch` | 联网检索资料 | `@deepseek-ai/dsh-tool-web` |
+| `web_search` | 联网检索（**不开 `web_fetch`**） | `@deepseek-ai/dsh-tool-web` |
 | `pwsh`（Windows）/ `bash`（POSIX） | 执行终端命令 | `@deepseek-ai/dsh-tool-pwsh-persistent` |
 | `job_output` / `job_list` / `job_kill` | 后台任务控制 | `@deepseek-ai/dsh-tool-jobs` |
 
-**干净 harness 上的基线是 11 个工具**（社区评审在分支上实测）：上面这 7 个加上无法由预设声明的 4 个——
+`web_fetch` 关掉了（`fetch: false`）：`dsh-tool-web` 对两个工具各自判门，设成 false 就不注册
+`web_fetch`，`web_search` 照常。本预设的用途是本地小模型的编码与检索，服务端检索够用；关掉
+它同时意味着**模型不参与选择要请求哪个 URL**，并少掉一件工具的 schema。
+
+**干净 harness 上的基线是 10 个工具**：上面这 7 个（`web_fetch` 已关）加上无法由预设声明的 3 个——
 
 - `read_image`：宿主 `attachments` 挂载时自动注册，读图片用。
 - `job_output` / `job_list` / `job_kill`：随 `tool-jobs` 行注册。
-- `load_workspace_dependencies`：宿主层工具。
 
-装了额外宿主插件就会更多，那时 `tool-surface` 才开始削掉它们：作者这台机器装了 SSH 插件，
-多出 6 个 `ssh_*`，与前两行表中的 13 个工具对应。**工具数取决于 profile，不是这个预设的
-固定属性**——所以基线写 11 个，13 个是「作者 profile」的实测值。
+装了额外宿主插件还会多：作者这台机器装了 SSH 插件，多出 6 个 `ssh_*` 和一个
+`load_workspace_dependencies`（就是 `tool-surface` 要摘的那些）。**工具数取决于 profile，
+不是这个预设的固定属性。**
 
 三个取舍：
 
@@ -114,8 +121,9 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
   schema 也只有一个 `command` 参数、没有 sandbox 升级字段（省 671 token）。`cd`、变量、函数
   跨调用保持，对小模型尤其重要——它省掉了「把命令拼成一条复合命令」这一步推理。
   `maxOutputChars: 12000` 保证原始日志挤不掉提示词。
-- **输出上限在工具层收窄。** `readLimit: 1200`、`searchMaxResults: 5`、
-  `fetchMaxOutputChars: 24000`（出厂默认 200,000 字符，比本地模型整个窗口还大）。
+- **输出上限在工具层收窄，网络面也收窄。** `readLimit: 1200`、`searchMaxResults: 5`；
+  `fetch: false` 直接不注册 `web_fetch`（不设它的话，出厂的 `fetchMaxOutputChars` 是
+  200,000 字符，比本地模型的整个窗口还大——那个上限本身也说明这一件工具不适合小窗口）。
 - **保留 `compaction-basic`。** 短上下文正是要设计的失效场景，自动压缩必须能工作。
 
 ### 3. 遮蔽继承来的全局工具
