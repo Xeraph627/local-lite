@@ -130,12 +130,19 @@ DSH 把 **host 层挂载的工具对每个 agent 都可见**，与预设无关�
 **名单是算出来的，不是写死的**：
 
 ```
-deny = { 实时全局视图里的名字 } - { 本预设自己注册的 } - { keep } + { alsoDeny }
+deny = { 实时全局视图里的名字 } - { 本预设自己注册的 } - { 保留的传输名 } - { keep } + { alsoDeny }
 ```
 
 `restrict()` 遇到未知工具名会**直接抛错**，所以写死的名单一旦 profile 变化（比如你启用了
-SSH 插件）就会反过来让预设挂不上。算出来的名单不会过期。所有失败路径都只记日志、不抛错：
-削不掉只是多花 token，不该让预设组不起来。
+SSH 插件）就会反过来让预设挂不上。算出来的名单不会过期。
+
+**保留的传输名必须排掉**：`tools` 行处于 `ptc` 或 `both` 模式时，全局视图里会出现
+保留名 `run_code`，而 `restrict()` 拒绝它。这一条不是装饰——`tools/mutation-check.mjs`
+把过滤拆掉后实测：`accepted=0, warnings=2`，**整套遮蔽全丢**，重试也救不回来（重试只丢
+调用方显式写的 `alsoDeny`，算出来的 `run_code` 会跟着进重试）。
+
+其余失败路径都只记日志、不抛错：削不掉只是多花 token，不该让预设组不起来。`keep` 是
+保留某个继承工具的逃生口，例如 `keep: [ask_user_question]`。
 
 ### 故意不放的东西
 
@@ -212,7 +219,8 @@ local-lite/
 └─ tools/                # 开发期工具，不参与运行（在 files 白名单之外）
    ├─ validate-patch.mjs     # 装之前校验：声明形状 / 禁止路径行 / 行名真能解析 / isolate 完整
    ├─ patch-anchoring.mjs    # 复刻 Host 的行名锚定规则，供校验器使用
-   ├─ test-tool-surface.mjs  # 用假注册表单测插件逻辑
+   ├─ test-tool-surface.mjs  # 六种情形的回归测试：假注册表复刻 restrict() 的三类拒绝
+   ├─ mutation-check.mjs     # 变异校验：证明 run_code 过滤是必需而非装饰
    ├─ measure-session.mjs    # 实测某个会话的固定开销（提示词 + 工具 schema）
    ├─ verify-claims.mjs      # 用字节校验文档里的数字：persona 字符数 + 平台专用词 + 工具清单
    ├─ session-log.mjs        # 解码会话日志（zstd 分帧 JSONL）
@@ -230,16 +238,19 @@ local-lite/
 # 1. 声明校验：形状 / 禁止路径行 / 行名解析 / isolate 完整性 —— 必须全绿才能装
 node tools/validate-patch.mjs cordis.patch.yml
 
-# 2. 插件逻辑单测：deny 名单应恰好是非本预设的全局工具，且不应有 warning
+# 2. 插件回归测试：六种情形，假注册表复刻 restrict() 的三类拒绝
 node tools/test-tool-surface.mjs
 
-# 3. 实测某个会话的固定开销
+# 3. 变异校验：把 run_code 过滤拆掉，证明整套遮蔽真的会失效
+node tools/mutation-check.mjs
+
+# 4. 实测某个会话的固定开销
 node tools/measure-session.mjs <session.v4.jsonl.zstd>
 
-# 4. 校验文档数字（persona 必须不含平台专用工具名）
+# 5. 校验文档数字（persona 必须不含平台专用工具名）
 node tools/verify-claims.mjs cordis.patch.yml <session.v4.jsonl.zstd>
 
-# 5. 会话日志概览（事件类型统计 / 读某类事件）
+# 6. 会话日志概览（事件类型统计 / 读某类事件）
 node tools/session-log.mjs <session.v4.jsonl.zstd> [eventType]
 ```
 
