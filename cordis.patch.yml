@@ -29,13 +29,20 @@
 #
 # 3b. THE INHERITED GLOBAL SURFACE. Tools mounted by the HOST are visible to
 #    every agent regardless of preset, and on this deployment that is where most
-#    of the remaining cost sat: six `ssh_*` controls (~1,090 tokens) plus
-#    `load_workspace_dependencies`. The `tool-surface` row below computes a deny
+#    of the remaining cost sat: six `ssh_*` controls plus
+#    `load_workspace_dependencies`, about 1,249 tokens of the wire between them.
+#    The `tool-surface` row below computes a deny
 #    filter from the live global view and registers it on this preset's standing
 #    scope, so agents composed from this preset stop paying for global tools the
 #    preset does not declare. It is computed rather than listed because
 #    `ctx.tools.restrict()` throws on an unknown name. Re-measure before editing
 #    `keep`: it is the escape hatch for a global tool this preset should keep.
+#
+#    How much that is worth is per-host, because the row can only remove tools
+#    the host mounted: the same-machine pair of sessions (this row running vs
+#    not) differed by 1,151 tokens. On a plain harness the only inherited global
+#    is `load_workspace_dependencies`, so the saving is ~158. The preset's OWN
+#    cost is the stable number; this one is not.
 #
 # 4. WHAT IS DELIBERATELY ABSENT. Plan mode (its `plan:policy` section is ~1k
 #    tokens of standing system prompt and cannot be shortened — note the

@@ -39,26 +39,33 @@
 
 | 会话 | 系统提示词 | 工具 schema | 固定开销 |
 |---|---|---|---|
-| 本地简化（当前配置，`web_fetch` 关） | 190 token | 1,599 token（11 个工具） | **1,789 token** |
-| 本地简化，`web_fetch` 开 | 186 token | 1,818 token（13 个工具） | 2,004 token |
-| 本地简化，`tool-surface` **未**生效 | 186 token | 2,969 token（19 个工具） | 3,155 token |
+| 本地简化，native 呈现（`web_fetch` 关） | 190 token | 1,599 token（11 个工具） | **1,789 token** |
+| 本地简化，native 呈现，`web_fetch` 开 | 186 token | 1,818 token（13 个工具） | 2,004 token |
+| 本地简化，native 呈现，`tool-surface` **未**生效 | 186 token | 2,969 token（19 个工具） | 3,155 token |
+| 本地简化，**PTC 呈现**（`tools` 行 `mode: both`） | 190 token | 2,289 token（13 个工具） | 2,479 token |
 | 标准预设（`deepseek-flash`，另一条路由，仅作参照） | 1,490 token | 7,798 token（36 个工具） | 9,288 token |
 
 第 2、3 行的 persona 逐字节相同（已比对哈希），宿主工具面相同，**唯一差别是
-`tool-surface` 有没有把继承来的全局工具摘掉**：那 6 个 `ssh_*` 与
-`load_workspace_dependencies` 合计约 1,151 token。这一对量的是插件本身的收益，
+`tool-surface` 有没有把继承来的全局工具摘掉**：那 6 个 `ssh_*` 加
+`load_workspace_dependencies` 本身约 1,249 token，两行相差 1,151（余下差额来自第 2 行
+仍注册着 `web_fetch` 的 schema，第 3 行没有）。这一对量的是插件本身的收益，
 不是跨 profile 的对比。
+
+第 4 行是 PTC 部署的实测：wire 上多了保留的 `run_code`（531 token），而**继承来的全局
+工具仍全部缺席** —— 这是「保留名必须排除出 deny 名单」那条修复在真机上的验证。
+因为 `run_code` 在这条对照里始终存在，第 4 行与第 1 行的差额（690）**不能**当作遮蔽
+收益，它只说明 PTC 呈现本身贵了多少。
 
 > 第 1 行是当前配置的实测。与第 2 行的差别有两处：`web_fetch` 的 schema（61 token）不再
 > 注册，以及 `load_workspace_dependencies` 被摘掉（第 2 行里它还在）。提示词 190 而非 186
 > 是因为 persona 的 247 字符后追加的工作目录行这次是 10 字符（`D:\ASUS\Work\Chat` 那次是
-> 17 字符，故 270 字符 / 186 token）。
+> 17 字符）。
 >
-> 第 4 行只作为量级参照，**不要与前三行相减**：它跑在另一条路由、另一个窗口大小上。
+> 第 5 行只作为量级参照，**不要与其它行相减**：它跑在另一条路由、另一个窗口大小上。
 >
 > **收益大小取决于机器上装了多少宿主插件**：摘掉的都是宿主层挂载的工具，干净 harness 上
-> 只剩 `load_workspace_dependencies` 一个可摘。本预设的**固定成本**是约 1,789 token；
-> `tool-surface` 是随 profile 变化的**额外**收益。
+> 只剩 `load_workspace_dependencies` 与宿主全局的 `web_fetch` 两个可摘（约 220 token）。
+> 本预设的**固定成本**是约 1,789 token；`tool-surface` 是随 profile 变化的**额外**收益。
 >
 > 一个容易误判的地方：会话记录头部的 `agentPreset` 字段是在**建会话时**写入的，
 > 早于预设绑定，所以跑本地简化的会话里那个字段仍写着 `standard`。判断依据应该是模型
@@ -112,9 +119,10 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 - `read_image`：宿主 `attachments` 挂载时自动注册，读图片用。
 - `job_output` / `job_list` / `job_kill`：随 `tool-jobs` 行注册。
 
-装了额外宿主插件还会多：作者这台机器装了 SSH 插件，多出 6 个 `ssh_*` 和一个
-`load_workspace_dependencies`（就是 `tool-surface` 要摘的那些）。**工具数取决于 profile，
-不是这个预设的固定属性。**
+那 3 个是**预设自己不声明**、而宿主一定会挂的，所以干净 harness 的 wire 是这 10 个。
+宿主还可能**全局**挂载 `load_workspace_dependencies` 与 `web_fetch`（都约 158/61 token），
+这两个正是 `tool-surface` 会摘掉的；作者这台机器额外装了 SSH 插件，多出 6 个 `ssh_*`。
+**工具数取决于 profile，不是这个预设的固定属性。**
 
 三个取舍：
 

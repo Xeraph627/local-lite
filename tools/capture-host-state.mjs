@@ -9,8 +9,9 @@
  *   node presets/local-lite/tools/capture-host-state.mjs [--out <file.md>] [--id local-lite]
  *   node presets/local-lite/tools/capture-host-state.mjs --session <session.v4.jsonl.zstd>
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { zstdDecompressSync } from 'node:zlib'
+import { existsSync, writeFileSync } from 'node:fs'
+
+import { approxTokens, readSessionRecords, requestTools, systemPromptText } from './session-frames.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name) => {
@@ -23,73 +24,6 @@ const outFile = flag('--out')
 
 /** This machine's DSH Web GUI. */
 const BASE = process.env.DSH_WEB_URL ?? 'http://127.0.0.1:19387'
-
-/** The zstd frame run of a DSH session log, decoded to records. */
-function sessionRecords(file) {
-  const buf = readFileSync(file)
-  const magic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
-  const declaredSize = (offset) => {
-    const descriptor = buf[offset + 4]
-    const fcsFlag = descriptor >> 6
-    let cursor = offset + 6
-    if ((descriptor & 0b100) !== 0) cursor += 4
-    if (fcsFlag === 0) return (descriptor & 0b100000) !== 0 ? buf.readUInt8(cursor) : null
-    if (fcsFlag === 1) return buf.readUInt16LE(cursor) + 256
-    if (fcsFlag === 2) return buf.readUInt32LE(cursor)
-    return Number(buf.readBigUInt64LE(cursor))
-  }
-  const frameLength = (offset, expected) => {
-    const limit = buf.length - offset
-    const ok = (length) => {
-      if (length > limit) return false
-      try {
-        const out = zstdDecompressSync(buf.subarray(offset, offset + length))
-        return expected === null ? out.length > 0 : out.length === expected
-      } catch {
-        return false
-      }
-    }
-    let hi = 1024
-    while (hi <= limit && !ok(hi)) hi *= 2
-    if (hi > limit) return -1
-    let lo = Math.max(0, Math.floor(hi / 2))
-    while (lo + 1 < hi) {
-      const mid = Math.floor((lo + hi) / 2)
-      if (ok(mid)) hi = mid
-      else lo = mid
-    }
-    return hi
-  }
-  const parts = []
-  let cursor = 0
-  while (cursor < buf.length) {
-    if (buf[cursor] !== 0x28 || buf[cursor + 1] !== 0xb5) {
-      const next = buf.indexOf(magic, cursor)
-      if (next === -1) break
-      cursor = next
-    }
-    const length = frameLength(cursor, declaredSize(cursor))
-    if (length <= 0) break
-    parts.push(zstdDecompressSync(buf.subarray(cursor, cursor + length)))
-    cursor += length
-  }
-  const records = []
-  for (const line of Buffer.concat(parts).toString('utf8').split('\n')) {
-    if (line.trim() === '') continue
-    try {
-      records.push(JSON.parse(line))
-    } catch {
-      /* torn tail */
-    }
-  }
-  return records
-}
-
-/** Rough mixed CJK/ASCII token estimate, consistent with the other tools. */
-function approxTokens(text) {
-  const cjk = (text.match(/[\u3000-\u9fff\uff00-\uffef]/g) ?? []).length
-  return Math.round(cjk + (text.length - cjk) / 4)
-}
 
 const lines = []
 
@@ -140,11 +74,9 @@ if (row === undefined) {
 
 // 2. Optionally the session that ran on the declaration.
 if (sessionFile !== undefined && existsSync(sessionFile)) {
-  const records = sessionRecords(sessionFile)
-  const header = records.find((r) => r.type === 'request/header')
-  const tools = header?.data?.header?.tools ?? []
-  const system = records.filter((r) => r.type === 'system/message').at(-1)
-  const systemText = system?.data?.message?.content?.map((b) => b.text ?? '').join('') ?? ''
+  const records = readSessionRecords(sessionFile)
+  const tools = requestTools(records)
+  const systemText = systemPromptText(records)
   const toolsJson = JSON.stringify(tools)
   lines.push(`### The session that ran on the declaration`, '')
   lines.push(`Recorded request (\`request/header\` + \`system/message\`) from this session:`, '')
@@ -154,11 +86,19 @@ if (sessionFile !== undefined && existsSync(sessionFile)) {
   lines.push(`TOTAL         : ~${approxTokens(systemText) + approxTokens(toolsJson)} tokens per request`)
   lines.push('```', '')
   lines.push(`Tools on the wire: ${tools.map((tool) => tool.name).join(', ')}`, '')
-  const inherited = tools.map((t) => t.name).filter((name) => name.startsWith('ssh_'))
+  const inherited = tools.map((tool) => tool.name).filter((name) => name.startsWith('ssh_'))
+  const transport = tools.some((tool) => tool.name === 'run_code')
   lines.push(
     inherited.length === 0
-      ? 'No inherited global tools on the wire, so `tool-surface` masked them in this session.'
+      ? 'No inherited global tool is on the wire, so `tool-surface` masked them in this session.'
       : `Inherited global tools still present: ${inherited.join(', ')}`,
+    '',
+  )
+  lines.push(
+    transport
+      ? 'The wire also carries `run_code`, so this deployment presents tools as `ptc` or `both` — the ' +
+          'reserved PTC transport name is present and `tool-surface` still masked the inherited globals.'
+      : 'The wire carries no `run_code`, so this deployment presents tools natively.',
     '',
   )
 } else if (sessionFile !== undefined) {

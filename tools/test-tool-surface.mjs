@@ -39,7 +39,7 @@ const GLOBAL_PLAIN = [
 ]
 
 /** Names the preset registers in its own scope; the registry refuses to mask them. */
-const SCOPE_LOCAL = new Set(['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'web_search', 'web_fetch', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill'])
+const SCOPE_LOCAL = new Set(['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'web_search', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill'])
 
 /**
  * A registry double faithful to the contract in `@deepseek-ai/dsh-tools`:
@@ -109,7 +109,12 @@ console.log('\n[1] host with the SSH plugin mounted')
   check('every ssh_* control is denied', GLOBAL_WITH_SSH.filter((n) => n.startsWith('ssh_')).every((n) => denied.has(n)))
   check('load_workspace_dependencies is denied', denied.has('load_workspace_dependencies'))
   check('no tool the preset registers is denied', deny.every((toolName) => !SCOPE_LOCAL.has(toolName)))
-  check('nothing but the non-preset globals is denied', deny.length === 7, `got ${deny.length}`)
+  check(
+    'web_fetch IS denied, because this preset does not register it',
+    denied.has('web_fetch'),
+    'a host-global web_fetch must be masked or the fetch:false posture is inverted',
+  )
+  check('nothing but the non-preset globals is denied', deny.length === 8, `got ${deny.length}`)
 }
 
 // 2. The PTC regression: run_code is in the view. It must never reach the
@@ -171,7 +176,11 @@ console.log('\n[4] plain harness (11 tools on the wire)')
   const { calls, warnings } = run(GLOBAL_PLAIN, { keep: [] })
   const deny = calls[0]?.deny ?? []
   console.log(`      deny (${deny.length}): ${deny.join(', ') || '(none)'}`)
-  check('only load_workspace_dependencies is denied', deny.length === 1 && deny[0] === 'load_workspace_dependencies', deny.join(', '))
+  check(
+    'only the inherited globals are denied (load_workspace_dependencies, web_fetch)',
+    deny.length === 2 && deny.includes('load_workspace_dependencies') && deny.includes('web_fetch'),
+    deny.join(', '),
+  )
   check('no warnings', warnings.length === 0, warnings.join(' | '))
 }
 
