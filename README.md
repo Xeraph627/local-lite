@@ -2,11 +2,11 @@
 
 > 一个为**上下文窗口很小的本地模型**准备的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Agent 预设。
 > 每次请求的固定开销约 **1,789 token**（系统提示词 + 工具 schema），工具面收拢为
-> 文件读写、检索与终端命令七件。
+> 文件读写、检索、终端与后台任务共 10 个工具。
 >
 > A minimum-prompt DSH agent preset for short-context local models: a standing
 > per-request cost of about 1,789 tokens (system prompt plus tool schemas), with
-> the tool surface narrowed to seven file, search, web and shell tools.
+> the tool surface narrowed to ten tools for files, search, terminal and background jobs.
 
 装好之后，新建会话的预设选择器里会多出一项 **本地简化**。
 
@@ -72,6 +72,32 @@
 > 真正收到的东西——`tools/verify-claims.mjs` 现在就是这么做的：wire 上还留着继承来的
 > 全局工具，就说明 `tool-surface` 没生效。
 
+## 与自带 minimal 的差异
+
+同样的机器、同样的路由（`lm-studio`，32k 窗口）实测：
+
+| | 系统提示词 | 工具 | 固定开销 |
+|---|---|---|---|
+| 自带 `minimal` | 46 字符 | 2（一个 shell + 宿主层的 `load_workspace_dependencies`） | **361 token** |
+| 本地简化 | 257 字符 | 11 | **1,789 token** |
+
+`minimal` 只有一个 shell，**没有**读写文件、检索、后台任务与自动压缩——它适合测试和对比
+「只剩终端的模型能做什么」。本地简化多花的约 **1,428 token** 买到的正是这些能干活的能力：
+read/write/edit、glob/grep、web_search、job 控制，以及短上下文必需的 `compaction-basic`。
+两者定位不同，不是同一个预设的两个版本。
+
+## `tool-surface` 在干净 harness 上实际省多少
+
+**省得比这张表看起来少。** 它只能摘「宿主挂载、而本预设不声明」的工具：
+
+- 干净 harness 上这一类只有 `load_workspace_dependencies`（约 **158 token**）；
+- 若部署还把 `web_fetch` 挂到全局，再加 **61 token**；
+- 两者都不挂时收益接近 **0**。
+
+作者这台机器上「本行生效 vs 未生效」相差 1,151 token，是因为它**额外装了 SSH 插件**（6 个
+`ssh_*`）。那部分不是预设的固定特征，所以本页把它标成 per-host 的额外收益，而把
+**约 1,789 token 的预设自身成本**当作稳定值。
+
 ---
 
 ## 它做了什么
@@ -82,7 +108,7 @@
 harness 身份、web-surface、工具指南、文件引用、结构化输出等段落一律不再注入。
 配合 `includeRuntimeContext: false`，sandbox / approval 那几条 user-role 运行时快照也一并关闭。
 
-提示词本身 247 字符（组装时再追加一行工作目录，合计 270 字符），写成中文，因为本地小模型通常在中文上表现最好：
+提示词本身 247 字符，组装时再追加一行工作目录（总长随该路径变化：实测 10 字符路径下共 257 字符），写成中文，因为本地小模型通常在中文上表现最好：
 
 ```
 你是本地精简模式的编码助手，工作目录 <cwd>。
@@ -100,7 +126,7 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 
 ### 2. 工具面收拢到这几件
 
-本预设自己声明 7 个：
+这条组合**声明 10 个工具名**（分布在 5 个插件行上）：
 
 | 工具 | 能力 | 来源 |
 |---|---|---|
@@ -110,17 +136,16 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 | `pwsh`（Windows）/ `bash`（POSIX） | 执行终端命令 | `@deepseek-ai/dsh-tool-pwsh-persistent` |
 | `job_output` / `job_list` / `job_kill` | 后台任务控制 | `@deepseek-ai/dsh-tool-jobs` |
 
+（每个平台只挂其中一个 shell，所以「一个 shell」在操作系统间不改变总数。）
+
 `web_fetch` 关掉了（`fetch: false`）：`dsh-tool-web` 对两个工具各自判门，设成 false 就不注册
 `web_fetch`，`web_search` 照常。本预设的用途是本地小模型的编码与检索，服务端检索够用；关掉
 它同时意味着**模型不参与选择要请求哪个 URL**，并少掉一件工具的 schema。
 
-**干净 harness 上的基线是 10 个工具**：上面这 7 个（`web_fetch` 已关）加上无法由预设声明的 3 个——
+**wire 上是 11 个**：上面这 10 个加上 `read_image` —— 它由 `dsh-tool-fs` 在宿主挂载
+`attachments` 时自动注册，预设无法声明它。实测会话的 11 个正是这个构成。
 
-- `read_image`：宿主 `attachments` 挂载时自动注册，读图片用。
-- `job_output` / `job_list` / `job_kill`：随 `tool-jobs` 行注册。
-
-那 3 个是**预设自己不声明**、而宿主一定会挂的，所以干净 harness 的 wire 是这 10 个。
-宿主还可能**全局**挂载 `load_workspace_dependencies` 与 `web_fetch`（都约 158/61 token），
+宿主还可能**全局**挂载 `load_workspace_dependencies` 与 `web_fetch`（约 158 / 61 token），
 这两个正是 `tool-surface` 会摘掉的；作者这台机器额外装了 SSH 插件，多出 6 个 `ssh_*`。
 **工具数取决于 profile，不是这个预设的固定属性。**
 
@@ -139,7 +164,7 @@ harness 身份、web-surface、工具指南、文件引用、结构化输出等�
 
 这一条是本预设唯一的自研插件 `tool-surface`，也是收益最大的一块。
 
-DSH 把 **host 层挂载的工具对每个 agent 都可见**，与预设无关。所以即使预设只声明 7 个工具，
+DSH 把 **host 层挂载的工具对每个 agent 都可见**，与预设无关。所以即使预设只声明 10 个工具，
 实测仍有 19 个——多出来的是一个 SSH 插件（6 个 `ssh_*`，≈1,090 token）和
 `load_workspace_dependencies`（158 token），跟这个预设毫无关系。
 
@@ -311,7 +336,7 @@ zstd 帧，很多帧的帧头 `fcsFlag = 0`（不声明解压大小）。曾经�
 ## 兼容性
 
 - 在 **DeepSeek Harness 0.2.0-rc.2**（Windows / Electron Desktop，`lm-studio / qwen3.5-9b`）
-  上开发并实测通过：系统提示词 270 字符（persona 247 字符 + 一行工作目录）。
+  上开发并实测通过：系统提示词 257 字符（persona 247 字符 + 一行 10 字符的工作目录）。
 - shell 行按平台二选一（`!!js process.platform` 门控）：Windows 用 `pwsh`，POSIX 用 `bash`。
   两个套餐的 `description` 都覆写成中文。**POSIX 分支尚未在真机验证过**——但 persona 里
   不出现具体工具名，所以非 Windows 用户不会拿到一个不存在的工具。

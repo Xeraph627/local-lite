@@ -14,11 +14,14 @@
 #    language because these models are typically strongest there.
 #
 # 2. THE TOOL SCHEMAS. Schemas repeat on every request, so the roster is the
-#    dominant cost once the prompt is small. Exactly seven tools are mounted —
-#    read/write/edit, glob/grep, web_search/web_fetch, and one shell — and the
-#    shell is the PERSISTENT pwsh row rather than `tool-pwsh`, because the
-#    persistent row accepts a `description` override (its own default is long)
-#    and its schema is one `command` string with no sandbox-escalation fields.
+#    dominant cost once the prompt is small. Ten tool names are declared across
+#    five rows — read/write/edit, glob/grep, web_search, one shell, and the three
+#    job controls — and `web_fetch` is off, so the wire carries those ten plus
+#    `read_image`, which `dsh-tool-fs` auto-registers while `attachments` is
+#    mounted and no preset can declare. The shell is the PERSISTENT pwsh row
+#    rather than `tool-pwsh`, because the persistent row accepts a `description`
+#    override (its own default is long) and its schema is one `command` string
+#    with no sandbox-escalation fields.
 #
 # 3. THE SHELL. One persistent PowerShell per session means `cd` survives
 #    across calls, which matters more to a small model than to a large one: it
